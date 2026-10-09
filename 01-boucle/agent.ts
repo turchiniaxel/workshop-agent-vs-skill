@@ -2,7 +2,6 @@
 // Un agent, c'est un modèle, des outils et une boucle. Ici, tu écris les trois.
 //
 // Lancer : npm run step1 -- "ta question"
-// Le programme s'arrête sur le prochain TODO à compléter, de 1 à 5, dans l'ordre.
 // Énoncé, indices et liens de doc : 01-boucle/ENONCE.md
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -17,13 +16,6 @@ const MAX_TURNS = 10; // garde-fou : sans plafond, un agent peut boucler et cons
 const MAX_TOKENS = 2048; // longueur maximale d'UNE réponse du modèle
 const MAX_FILE_CHARS = 8000; // chaque tour renvoie tout l'historique : un gros fichier coûte à chaque tour
 const SYSTEM = "Tu réponds en français à des questions sur un dépôt de code. Explore-le avec tes outils au lieu de deviner.";
-
-// --- Échafaudage (fourni) : signale le prochain TODO au lieu de planter ---
-class TodoError extends Error {
-  constructor(readonly step: number, detail: string) {
-    super(`TODO ${step} à compléter : ${detail}`);
-  }
-}
 
 // --- Confinement (fourni) : tout chemin doit rester dans sample-repo/ ---
 // Les chemins viennent du modèle : on ne leur fait pas confiance. « ../.env » doit être refusé.
@@ -63,29 +55,25 @@ function listFiles(dir: string): string {
 }
 
 // --- Outil 2 : read_file ---
-// TODO 1 : complète le schéma de read_file, sur le modèle de listFilesTool.
-//   - description : ce que fait l'outil ET quand s'en servir. C'est la seule documentation que lit le modèle.
-//   - properties : un paramètre « path », de type string, avec sa propre description (donne un exemple de chemin).
-//   - required : « path » est obligatoire.
-// Doc : https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use
+// TODO 1 : le schéma de read_file
 const readFileTool: Anthropic.Tool = {
   name: "read_file",
-  description: "",
+  description:
+    "Renvoie le contenu texte d'un fichier du dépôt. Les fichiers très longs sont tronqués. " +
+    "À utiliser une fois le chemin connu grâce à list_files.",
   input_schema: {
     type: "object",
-    properties: {},
-    required: [],
+    properties: {
+      path: { type: "string", description: "Chemin du fichier relatif à la racine du dépôt, par exemple « src/index.ts »." },
+    },
+    required: ["path"],
   },
 };
 
-// TODO 2 : renvoie le contenu texte du fichier « path ».
-//   - Passe le chemin par safePath(path) avant toute lecture : c'est lui qui refuse « ../.env ».
-//   - Lis le fichier avec readFileSync(chemin, "utf8").
-//   - Au-delà de MAX_FILE_CHARS caractères, garde le début et ajoute « [... fichier tronqué] » à la fin.
-//   Pas besoin de try/catch : runTool transforme déjà toute exception en résultat d'erreur pour le modèle.
-// Doc : https://nodejs.org/api/fs.html#fsreadfilesyncpath-options
+// TODO 2 : le code de read_file
 function readFile(path: string): string {
-  throw new TodoError(2, `readFile("${path}") n'est pas encore écrit.`);
+  const text = readFileSync(safePath(path), "utf8");
+  return text.length > MAX_FILE_CHARS ? `${text.slice(0, MAX_FILE_CHARS)}\n[... fichier tronqué]` : text;
 }
 
 const tools: Anthropic.Tool[] = [listFilesTool, readFileTool];
@@ -100,33 +88,28 @@ function runTool(name: string, input: unknown): { content: string; is_error: boo
     if (name === "read_file") return { content: readFile(args.path ?? ""), is_error: false };
     return { content: `Outil inconnu : ${name}`, is_error: true };
   } catch (error) {
-    if (error instanceof TodoError) throw error; // échafaudage : un TODO manquant arrête le programme
     const message = error instanceof ToolError ? error.message : `Erreur : ${(error as Error).message}`;
     return { content: message, is_error: true };
   }
 }
 
 // --- Le modèle ---
-// TODO 3 : envoie la conversation au modèle et renvoie sa réponse.
-//   Appelle client.messages.create avec cinq champs : model (MODEL), max_tokens (MAX_TOKENS),
-//   system (SYSTEM), tools et messages.
-//   L'API ne garde aucune mémoire d'un appel à l'autre : messages doit contenir TOUTE la conversation.
-// Doc : https://platform.claude.com/docs/en/api/messages
+// TODO 3 : l'appel au modèle, avec toute la conversation
 async function askModel(messages: Anthropic.MessageParam[]): Promise<Anthropic.Message> {
-  throw new TodoError(3, "askModel() n'appelle pas encore le modèle.");
+  return client.messages.create({ model: MODEL, max_tokens: MAX_TOKENS, system: SYSTEM, tools, messages });
 }
 
 // --- Les appels d'outils ---
-// TODO 4 : exécute chaque bloc « tool_use » de la réponse et renvoie un « tool_result » pour chacun.
-//   - Parcours content : il peut contenir du texte avant les tool_use, ignore les blocs dont le type n'est pas "tool_use".
-//   - Affiche l'appel au fil de l'eau, par exemple : → read_file({"path":"src/index.ts"})
-//   - Exécute runTool(block.name, block.input).
-//   - Fabrique { type: "tool_result", tool_use_id: block.id, content, is_error }.
-//   Le tool_use_id relie chaque résultat à sa demande. Si le modèle demande deux outils dans le même tour,
-//   il attend deux tool_result : un oubli, et l'API répond par une erreur 400.
-// Doc : https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls
+// TODO 4 : un tool_result pour chaque tool_use, relié par son tool_use_id
 function executeToolCalls(content: Anthropic.ContentBlock[]): Anthropic.ToolResultBlockParam[] {
-  throw new TodoError(4, "executeToolCalls() n'exécute pas encore les outils.");
+  const results: Anthropic.ToolResultBlockParam[] = [];
+  for (const block of content) {
+    if (block.type !== "tool_use") continue;
+    console.log(`→ ${block.name}(${JSON.stringify(block.input)})`);
+    const { content, is_error } = runTool(block.name, block.input);
+    results.push({ type: "tool_result", tool_use_id: block.id, content, is_error });
+  }
+  return results;
 }
 
 // --- Affichage de la réponse finale (fourni) ---
@@ -136,50 +119,30 @@ function printAnswer(content: Anthropic.ContentBlock[]): void {
   }
 }
 
-// --- Vérification de progression (fourni) : contrôle les TODO 1 et 2 avant d'appeler l'API ---
-function checkProgress(): void {
-  const props = readFileTool.input_schema.properties as Record<string, unknown> | null | undefined;
-  if (!readFileTool.description || !props?.path || !readFileTool.input_schema.required?.includes("path")) {
-    throw new TodoError(1, "le schéma de read_file est incomplet (description, paramètre « path », required).");
-  }
-  readFile("README.md"); // lève TodoError(2) tant que readFile n'est pas écrit
-}
-
 // --- La boucle ---
-// TODO 5 : transforme ce premier essai en boucle.
-//   Pour l'instant, main() fait UN seul aller-retour avec le modèle et affiche ce qu'il renvoie : lance-le une fois
-//   pour observer stop_reason et les blocs tool_use. Remplace ensuite l'essai par la boucle de l'agent :
-//
-//     messages = [la question]
-//     répéter au plus MAX_TURNS fois :
-//       response = askModel(messages)
-//       ajouter { role: "assistant", content: response.content } à messages
-//       si response.stop_reason ne vaut pas "tool_use" : printAnswer(response.content), puis terminer
-//       ajouter { role: "user", content: executeToolCalls(response.content) } à messages
-//     plafond atteint : l'afficher et sortir avec process.exitCode = 1
-//
-// Doc : https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons
+// TODO 5 : la boucle
 async function main(): Promise<void> {
-  checkProgress();
+  // L'historique complet, renvoyé à chaque tour : l'API ne se souvient de rien.
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: question }];
 
-  // Premier essai : un seul tour, pour voir ce que renvoie le modèle.
-  const response = await askModel(messages);
-  console.log(`stop_reason : ${response.stop_reason}`);
-  // Les blocs « thinking » (le raisonnement du modèle, chiffré) sont masqués ici : longs et illisibles.
-  console.dir(response.content.filter((block) => block.type !== "thinking"), { depth: null });
-  if (response.stop_reason === "tool_use") {
-    console.log("\ntool_result à renvoyer au modèle :");
-    console.dir(executeToolCalls(response.content), { depth: null });
+  for (let turn = 1; turn <= MAX_TURNS; turn++) {
+    const response = await askModel(messages);
+    messages.push({ role: "assistant", content: response.content });
+
+    // Le modèle ne demande plus d'outil : c'est sa réponse finale.
+    if (response.stop_reason !== "tool_use") {
+      printAnswer(response.content);
+      return;
+    }
+
+    // Tous les tool_result du tour repartent ensemble, dans un seul message user.
+    messages.push({ role: "user", content: executeToolCalls(response.content) });
   }
-  throw new TodoError(5, "main() ne fait qu'un tour. Écris la boucle pour que l'agent aille jusqu'à la réponse.");
+  console.log(`\nPlafond de ${MAX_TURNS} tours atteint sans réponse finale.`);
+  process.exitCode = 1;
 }
 
 main().catch((error) => {
-  if (error instanceof TodoError) {
-    console.log(`\n${error.message}\nIndices : 01-boucle/ENONCE.md, section « TODO ${error.step} ».`);
-    return;
-  }
   if (error instanceof Anthropic.RateLimitError) {
     console.error("Limite de débit partagée atteinte (429) : la salle utilise la clé en même temps. Attends quelques secondes et relance.");
   } else if (error instanceof Anthropic.BadRequestError) {
