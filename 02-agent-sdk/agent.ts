@@ -5,9 +5,10 @@
 // Voir tout ce qui circule dans le flux : npm run step2 -- "ta question" --verbose
 // Énoncé, indices et liens de doc : 02-agent-sdk/ENONCE.md
 
-import { type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, tool, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
+import { z } from "zod";
 import { MODEL, SAMPLE_REPO, requireApiKey } from "../shared/config.js";
 
 requireApiKey();
@@ -61,41 +62,44 @@ function safePath(path: string): string {
   return full;
 }
 
-// TODO 3 (après les TODO 1 et 2) : écris ton propre outil de lecture, my_read, et remplace Read par lui.
-//   - Ajoute tool et createSdkMcpServer à l'import de "@anthropic-ai/claude-agent-sdk", et import { z } from "zod".
-//   - tool(nom, description, schéma, handler) : nom "my_read", une description comme celle de read_file à l'étape 1,
-//     le schéma est un objet de champs zod ({ path: z.string().describe("...") }).
-//   - Le handler reçoit { path } : lis le fichier avec safePath, tronque à MAX_FILE_CHARS, et renvoie
-//     { content: [{ type: "text", text: ... }] }. En cas d'erreur, renvoie le message avec isError: true.
-//   - createSdkMcpServer({ name: "workshop", tools: [ton outil] }) : un serveur MCP qui tourne dans ton process.
-//   - Dans options : retire "Read" de tools, ajoute mcpServers: { workshop: ... },
-//     et ajoute "mcp__workshop__my_read" à allowedTools.
-// Doc : https://code.claude.com/docs/en/agent-sdk/custom-tools
+// TODO 3 : ton propre outil de lecture, qui remplace Read
+const myReadTool = tool(
+  "my_read",
+  "Renvoie le contenu texte d'un fichier du dépôt. Les fichiers très longs sont tronqués. " +
+    "À utiliser une fois le chemin connu grâce à Glob ou Grep.",
+  { path: z.string().describe("Chemin du fichier, relatif à la racine du dépôt (par exemple « src/index.ts ») ou absolu.") },
+  async ({ path }) => {
+    try {
+      const text = readFileSync(safePath(path), "utf8");
+      const content = text.length > MAX_FILE_CHARS ? `${text.slice(0, MAX_FILE_CHARS)}\n[... fichier tronqué]` : text;
+      return { content: [{ type: "text", text: content }] };
+    } catch (error) {
+      // Comme à l'étape 1 : l'erreur repart au modèle (is_error), elle ne fait pas planter l'agent
+      return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true };
+    }
+  },
+);
 
-// TODO 1 : remplis l'objet d'options. Chaque option remplace un morceau que tu as écrit à la main à l'étape 1.
-//   - cwd            : SAMPLE_REPO, le dossier où travaille l'agent. Remplace le rôle de safePath.
-//   - model          : MODEL
-//   - tools          : les outils intégrés qui EXISTENT pour le modèle. Lesquels remplacent list_files et read_file ?
-//                      Il en faut trois (liste des outils intégrés : voir ENONCE.md).
-//   - allowedTools   : les outils pré-approuvés, qui s'exécutent sans demande de permission. Les mêmes trois.
-//   - settingSources : [], pour ignorer ~/.claude/ et la config du projet : l'agent part de zéro.
-//   - persistSession : false, pour ne laisser aucune session sur le disque.
-//   - maxTurns       : 10. Remplace ton MAX_TURNS.
-// Doc : https://code.claude.com/docs/en/agent-sdk/typescript (type Options)
-const options: Options = {};
+// Un serveur MCP qui tourne dans ton process : pas de binaire, pas de port
+const workshopServer = createSdkMcpServer({ name: "workshop", tools: [myReadTool] });
 
-// TODO 2 : lance l'agent et affiche le flux.
-//   - Ajoute query à l'import de "@anthropic-ai/claude-agent-sdk", en haut du fichier.
-//   - query({ prompt: question, options }) renvoie un flux asynchrone : parcours-le avec for await
-//     et passe chaque message à show(). Ces trois lignes remplacent toute la boucle de l'étape 1.
-// Doc : https://code.claude.com/docs/en/agent-sdk/agent-loop
+// TODO 1 : les options de l'agent (TODO 3 : Read remplacé par my_read)
+const options: Options = {
+  cwd: SAMPLE_REPO, // l'agent travaille dans sample-repo/
+  model: MODEL,
+  tools: ["Glob", "Grep"], // les seuls outils intégrés : Read est retiré, my_read le remplace
+  mcpServers: { workshop: workshopServer }, // tes outils à toi, hors de la liste tools
+  allowedTools: ["Glob", "Grep", "mcp__workshop__my_read"], // un outil MCP s'appelle mcp__<serveur>__<outil>
+  settingSources: [], // ni ~/.claude/ ni la config du projet
+  persistSession: false, // aucune session écrite sur le disque
+  maxTurns: 10,
+};
+
+// TODO 2 : l'appel à query(), qui remplace toute la boucle de l'étape 1
 async function main(): Promise<void> {
-  if (!options.tools) {
-    console.log("TODO 1 à compléter : l'objet options est vide.\nIndices : 02-agent-sdk/ENONCE.md, section « TODO 1 ».");
-    return;
+  for await (const message of query({ prompt: question, options })) {
+    show(message);
   }
-  console.log(`TODO 2 à compléter : query() n'est pas encore appelé. Question reçue : « ${question} »`);
-  console.log("Indices : 02-agent-sdk/ENONCE.md, section « TODO 2 ».");
 }
 
 main().catch((error) => {
