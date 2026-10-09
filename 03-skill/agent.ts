@@ -73,20 +73,15 @@ function show(message: SDKMessage): void {
   }
 }
 
-// TODO 1 : trois changements d'options par rapport à l'étape 2 (on repart du Read intégré, sans my_read).
-//   - tools          : ajoute "Skill". C'est l'outil qui permet au modèle d'invoquer un skill de lui-même.
-//   - settingSources : ["project"] au lieu de [], pour que le SDK lise .claude/skills/ du repo (pas ~/.claude/).
-//   - skills         : [SKILL_NAME], le seul skill que le modèle a le droit de voir. Claude Code embarque
-//                      les siens, dont un « code-review » qu'il pourrait préférer au tien.
-// TODO 2 : écris le skill dans .claude/skills/<nom>/SKILL.md, à la racine du repo.
-//   Un modèle à copier t'attend dans 03-skill/SKILL.modele.md.
-// Doc : https://code.claude.com/docs/en/agent-sdk/skills
+// TODO 1 : trois changements par rapport à l'étape 2
+// TODO 2 : le skill est dans .claude/skills/revue-de-code/SKILL.md
 const options: Options = {
   cwd: SAMPLE_REPO, // le SDK cherche .claude/skills/ ici et dans les dossiers parents
   model: MODEL,
-  tools: ["Read", "Glob", "Grep"],
+  tools: ["Read", "Glob", "Grep", "Skill"], // Skill permet au modèle d'invoquer un skill de lui-même
   allowedTools: ["Read", "Glob", "Grep"],
-  settingSources: [],
+  settingSources: ["project"], // charge .claude/skills/ du repo, pas ~/.claude/
+  skills: [SKILL_NAME], // seul skill que le modèle peut voir et invoquer
   persistSession: false,
   maxTurns: 10,
 };
